@@ -56,7 +56,7 @@ const FLOATER_EASE       = 0.08;
 
 /* Fleck als Mini-Superfleck (lokal am Floater) – RESET auf Referenz */
 const FLECK_SUPER_SIZE      = 44;
-const FLECK_SUPER_TINT      = [22,22,28];           // etwas dunkler
+const FLECK_SUPER_TINT      = [12,12,18];           // dunkler
 const FLECK_SUPER_ALPHA     = 0.24;
 const FLECK_SUPER_FEATHER   = 1.05;
 const FLECK_SUPER_DRAW_W    = 60 * SCALE * 0.9 * 0.9 * 0.9 * 0.9 * 0.9 * 0.82 * 1.06; // etwas größer
@@ -6725,14 +6725,8 @@ function draw() {
   /* Markierungsring + Beschriftung entfernt */
   const cmpMotion = compareMotionOffset();
   {
-    const rp = flowedPoint(p5.Vector.add(createVector(width * 0.28, height * 0.35), cmpMotion), 'rund-a', 13);
     const rh = flowedPoint(p5.Vector.add(createVector(width * 0.43, height * 0.23), cmpMotion), 'rund-u', 13);
     const rsem = flowedPoint(p5.Vector.add(createVector(width * 0.58, height * 0.58), cmpMotion), 'sem-s', 16);
-    drawingContext.save();
-    drawingContext.globalAlpha = 0.72 * ELEMENT_ALPHA;
-    drawingContext.filter = 'none';
-    drawRoundGlassTest('Rund-Test', rp.x, rp.y, NUCLEUS_DROP_BASE_SIZE * 0.95 * 0.9);
-    drawingContext.restore();
     drawingContext.save();
     drawingContext.globalAlpha = 0.72 * ELEMENT_ALPHA;
     drawingContext.filter = 'none';
@@ -6748,7 +6742,6 @@ function draw() {
     drawingContext.restore();
     drawingContext.filter = 'none';
     drawingContext.filter = 'none';
-    drawVariantLetter(uniqueElementLetter('Rundtest', 'orig'), rp.x + 14, rp.y - 10);
     drawVariantLetter(uniqueElementLetter('Rundtest', 'hf'), rh.x + 14, rh.y - 10);
     drawVariantLetter(uniqueElementLetter('Sem1'), rsem.x, rsem.y);
   }
@@ -6943,7 +6936,7 @@ function draw() {
     floater.pos.set(hfBaseX + hfMotionX, hf1BaseY + hfMotionY);
     push();
     drawingContext.save();
-    drawingContext.globalAlpha *= ELEMENT_ALPHA * 0.70;
+    drawingContext.globalAlpha *= ELEMENT_ALPHA * 0.64;
     drawingContext.filter = 'contrast(1.16) brightness(1.03)';
     translate(floater.pos.x, floater.pos.y);
     scale(0.80, 0.93);
