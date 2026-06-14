@@ -47,7 +47,7 @@ main {
   pointer-events: none;
 }
 
-canvas:not(#scene) {
+#defaultCanvas0 {
   position: fixed !important;
   inset: 0;
   z-index: 4;
@@ -55,4 +55,15 @@ canvas:not(#scene) {
   width: 100vw !important;
   height: 100vh !important;
   pointer-events: none;
+}
+
+body > canvas:not(#scene):not(#defaultCanvas0) {
+  position: absolute !important;
+  left: -10000px !important;
+  top: -10000px !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0 !important;
+  pointer-events: none;
+  z-index: -1 !important;
 }

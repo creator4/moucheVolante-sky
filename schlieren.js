@@ -1,8 +1,11 @@
 ﻿(function () {
 const canvas = document.getElementById('scene');
-const ctx = canvas.getContext('2d');
+const mainCtx = canvas.getContext('2d');
+let ctx = mainCtx;
 let lastMouse = null;
 let moveVector = { x: 0, y: 0 };
+let smoothedMoveAngle = 0;
+let hasSmoothedMoveAngle = false;
 let isMouseMoving = false;
 let lastMoveAt = 0;
 let motion = { x: 0, y: 0 };
@@ -10,6 +13,11 @@ let lastFrameAt = performance.now();
 let globalOrbitAngle = 0;
 let targetGlobalOrbitAngle = 0;
 let travelPhase = 0;
+let frameIndex = 0;
+let motionTotal = { x: 0, y: 0 };
+const SCHLIERE_SPRITE_REFRESH_FRAMES = 4;
+const SCHLIEREN_ALPHA_MUL = 0.84;
+const SCHLIEREN_THICKNESS_MUL = 0.86;
 
 const SCHLIEREN = [
   { x: 0.31, y: 0.34, len: 360, thick: 0.56, curve: 58, angle: -48, alpha: 0.86, seed: 1.7, shape: 'comma', fleckAlpha: 0.72 },
@@ -85,6 +93,10 @@ SCHLIEREN.forEach((item, index) => {
   item.freeY = 0;
   item.rot = 0;
   item.targetRot = 0;
+  item.sprite = null;
+  item.spriteBounds = null;
+  item.spriteCurlKey = null;
+  item.nextSpriteFrame = 0;
   item.visibility = (0.30 + stable01(item.seed) * 0.70) * 0.50;
   const thinStart = 0.18 + stable01(item.seed + 71.3) * 0.58;
   const thinLen = 0.10 + stable01(item.seed + 83.9) * 0.13;
@@ -120,7 +132,8 @@ function resize() {
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   canvas.width = Math.round(window.innerWidth * dpr);
   canvas.height = Math.round(window.innerHeight * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx = mainCtx;
+  mainCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
   draw();
 }
 
@@ -219,8 +232,9 @@ function schlierePath(item, offset = 0) {
 
 function schlierePathRange(item, offset = 0, startT = 0, endT = 1) {
   ctx.beginPath();
-  for (let j = 0; j <= 36; j++) {
-    const t = startT + (endT - startT) * (j / 36);
+  const steps = 26;
+  for (let j = 0; j <= steps; j++) {
+    const t = startT + (endT - startT) * (j / steps);
     const x = pathX(item, t);
     const y = pathY(item, t, offset);
     if (j === 0) ctx.moveTo(x, y);
@@ -228,18 +242,29 @@ function schlierePathRange(item, offset = 0, startT = 0, endT = 1) {
   }
 }
 
+function schliereVisibleAt(item, x, y) {
+  const radius = Math.max(item.len * 0.62, Math.abs(item.curve) * 2.2, item.thick * 18, 120);
+  return (
+    x > -radius &&
+    x < window.innerWidth + radius &&
+    y > -radius &&
+    y < window.innerHeight + radius
+  );
+}
+
 function drawSchliere(item, index) {
   const x = item.x * window.innerWidth;
   const y = item.y * window.innerHeight;
   const hasAttachedFleck = index % 3 !== 2;
-  const alpha = item.alpha * item.visibility;
+  const alpha = item.alpha * item.visibility * SCHLIEREN_ALPHA_MUL;
   const offsets = item.edge
     ? [[0, 0], [-window.innerWidth, 0], [window.innerWidth, 0], [0, -window.innerHeight], [0, window.innerHeight]]
     : [[0, 0]];
 
   offsets.forEach(([ox, oy]) => {
     const point = orbitPoint(x + item.px + ox, y + item.py + oy);
-    drawSchliereBody(item, alpha, hasAttachedFleck, point.x, point.y, globalOrbitAngle);
+    if (!schliereVisibleAt(item, point.x, point.y)) return;
+    drawSchliereSprite(item, alpha, hasAttachedFleck, point.x, point.y, globalOrbitAngle);
   });
 
   // Labels are intentionally disabled for smoother visual testing.
@@ -263,18 +288,25 @@ function drawSchliereBody(item, alpha, hasAttachedFleck, x, y, orbitAngle = 0) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate((item.angle * Math.PI) / 180 + item.rot + orbitAngle);
+  drawSchliereBodyLocal(item, alpha, hasAttachedFleck);
+  ctx.restore();
+}
+
+function drawSchliereBodyLocal(item, alpha, hasAttachedFleck) {
+  ctx.save();
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  drawCloudLayer(item, 14, `rgba(68, 70, 84, ${0.24 * alpha})`, Math.max(4.4, item.thick * 3.9), 0);
-  drawCloudLayer(item, 10, `rgba(78, 80, 94, ${0.17 * alpha})`, Math.max(6.4, item.thick * 5.3), 1.8);
-  drawCloudLayer(item, 6.5, `rgba(110, 112, 126, ${0.17 * alpha})`, Math.max(2.1, item.thick * 1.8), 0);
-  drawCloudLayer(item, 4.5, `rgba(140, 142, 154, ${0.09 * alpha})`, Math.max(1.1, item.thick * 0.8), -1.2);
+  const thick = item.thick * SCHLIEREN_THICKNESS_MUL;
+  drawCloudLayer(item, 14, `rgba(68, 70, 84, ${0.24 * alpha})`, Math.max(4.4, thick * 3.9), 0);
+  drawCloudLayer(item, 10, `rgba(78, 80, 94, ${0.17 * alpha})`, Math.max(6.4, thick * 5.3), 1.8);
+  drawCloudLayer(item, 6.5, `rgba(110, 112, 126, ${0.17 * alpha})`, Math.max(2.1, thick * 1.8), 0);
+  drawCloudLayer(item, 4.5, `rgba(140, 142, 154, ${0.09 * alpha})`, Math.max(1.1, thick * 0.8), -1.2);
 
   ctx.filter = 'blur(16px)';
   ctx.strokeStyle = `rgba(64, 66, 80, ${0.075 * alpha})`;
-  strokeSchliereLayer(item, Math.max(7.8, item.thick * 6.8), 3.4);
+  strokeSchliereLayer(item, Math.max(7.8, thick * 6.8), 3.4);
 
   if (hasAttachedFleck) {
     drawAttachedFleck(item, alpha);
@@ -284,8 +316,93 @@ function drawSchliereBody(item, alpha, hasAttachedFleck, x, y, orbitAngle = 0) {
   ctx.restore();
 }
 
+function schliereLocalBounds(item, hasAttachedFleck) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const offsets = [0, 1.8, -1.2, 2.2, 3.4];
+  offsets.forEach(offset => {
+    for (let j = 0; j <= 32; j++) {
+      const t = j / 32;
+      const x = pathX(item, t);
+      const y = pathY(item, t, offset);
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  });
+
+  if (hasAttachedFleck) {
+    const dia = Math.max(7, item.thick * 11);
+    const fleckX = -item.len * 0.34;
+    const fleckY = pathY(item, 0.18, 2.2);
+    minX = Math.min(minX, fleckX - dia * 2.8);
+    maxX = Math.max(maxX, fleckX + dia * 2.8);
+    minY = Math.min(minY, fleckY - dia * 2.0);
+    maxY = Math.max(maxY, fleckY + dia * 2.0);
+  }
+
+  const margin = Math.max(76, item.thick * 34);
+  const x = Math.floor(minX - margin);
+  const y = Math.floor(minY - margin);
+  return {
+    x,
+    y,
+    width: Math.ceil(maxX - minX + margin * 2),
+    height: Math.ceil(maxY - minY + margin * 2)
+  };
+}
+
+function updateSchliereSprite(item, alpha, hasAttachedFleck) {
+  const curlKey = Math.round((item.curl || 0) * 32);
+  const needsSprite = !item.sprite || item.spriteCurlKey !== curlKey;
+  if (!needsSprite) return;
+  if (item.sprite && frameIndex < item.nextSpriteFrame) return;
+
+  const bounds = schliereLocalBounds(item, hasAttachedFleck);
+  const sprite = item.sprite || document.createElement('canvas');
+  const w = Math.max(2, Math.min(1800, bounds.width));
+  const h = Math.max(2, Math.min(900, bounds.height));
+  if (sprite.width !== w || sprite.height !== h) {
+    sprite.width = w;
+    sprite.height = h;
+  }
+  const spriteCtx = sprite.getContext('2d');
+  spriteCtx.setTransform(1, 0, 0, 1, 0, 0);
+  spriteCtx.clearRect(0, 0, w, h);
+
+  const previousCtx = ctx;
+  ctx = spriteCtx;
+  ctx.save();
+  ctx.translate(-bounds.x, -bounds.y);
+  drawSchliereBodyLocal(item, alpha, hasAttachedFleck);
+  ctx.restore();
+  ctx = previousCtx;
+
+  item.sprite = sprite;
+  item.spriteBounds = bounds;
+  item.spriteCurlKey = curlKey;
+  item.nextSpriteFrame = frameIndex + (item.curlEnabled ? SCHLIERE_SPRITE_REFRESH_FRAMES : 999999);
+}
+
+function drawSchliereSprite(item, alpha, hasAttachedFleck, x, y, orbitAngle = 0) {
+  updateSchliereSprite(item, alpha, hasAttachedFleck);
+  if (!item.sprite || !item.spriteBounds) {
+    drawSchliereBody(item, alpha, hasAttachedFleck, x, y, orbitAngle);
+    return;
+  }
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((item.angle * Math.PI) / 180 + item.rot + orbitAngle);
+  ctx.drawImage(item.sprite, item.spriteBounds.x, item.spriteBounds.y);
+  ctx.restore();
+}
+
 function drawAttachedFleck(item, alpha) {
-  const dia = Math.max(7, item.thick * 11);
+  const dia = Math.max(7, item.thick * 11 * SCHLIEREN_THICKNESS_MUL);
   const fleckX = -item.len * 0.34;
   const fleckY = pathY(item, 0.18, 2.2);
 
@@ -358,13 +475,13 @@ function drawSchlierenFleck(item, index) {
   ctx.translate(x, y);
   ctx.rotate(item.angle + globalOrbitAngle);
   ctx.filter = 'blur(18px)';
-  ctx.fillStyle = `rgba(76, 78, 92, ${item.alpha})`;
+  ctx.fillStyle = `rgba(76, 78, 92, ${item.alpha * SCHLIEREN_ALPHA_MUL})`;
   ctx.beginPath();
   ctx.ellipse(0, 0, s * 1.95, s * 1.05, 0, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.filter = 'blur(10px)';
-  ctx.fillStyle = `rgba(122, 124, 138, ${item.alpha * 0.42})`;
+  ctx.fillStyle = `rgba(122, 124, 138, ${item.alpha * 0.42 * SCHLIEREN_ALPHA_MUL})`;
   ctx.beginPath();
   ctx.ellipse(s * 0.08, -s * 0.04, s * 1.12, s * 0.62, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -504,6 +621,7 @@ function drawDiffuseCloud(alpha, size) {
 }
 
 function draw() {
+  ctx = mainCtx;
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   ELEMENTE.forEach(drawElement);
   SCHLIEREN.forEach(drawSchliere);
@@ -511,24 +629,51 @@ function draw() {
 }
 
 function updateMotion() {
-  const speed = 1120.0;
+  const speed = 860.0;
   const now = performance.now();
   const dt = Math.min(50, now - lastFrameAt);
   lastFrameAt = now;
-  const movingNow = now - lastMoveAt < 140;
-  const ease = 1 - Math.exp(-dt / 80);
+  const movingNow = now - lastMoveAt < 180;
+  const ease = 1 - Math.exp(-dt / (movingNow ? 125 : 82));
+  const directionEase = 1 - Math.exp(-dt / 105);
+  if (movingNow) {
+    const targetAngle = Math.atan2(moveVector.y, moveVector.x);
+    if (!hasSmoothedMoveAngle) {
+      smoothedMoveAngle = targetAngle;
+      hasSmoothedMoveAngle = true;
+    } else {
+      smoothedMoveAngle += angleDelta(smoothedMoveAngle, targetAngle) * directionEase;
+    }
+  }
+  const driveVector = hasSmoothedMoveAngle
+    ? { x: Math.cos(smoothedMoveAngle), y: Math.sin(smoothedMoveAngle) }
+    : moveVector;
   const targetMotion = movingNow
-    ? { x: moveVector.x * speed, y: moveVector.y * speed }
+    ? { x: driveVector.x * speed, y: driveVector.y * speed }
     : { x: 0, y: 0 };
 
   motion.x += (targetMotion.x - motion.x) * ease;
   motion.y += (targetMotion.y - motion.y) * ease;
   const frameMoveX = motion.x * (dt / 1000);
   const frameMoveY = motion.y * (dt / 1000);
+  motionTotal.x += frameMoveX;
+  motionTotal.y += frameMoveY;
   const motionMag = Math.hypot(motion.x, motion.y);
   travelPhase += motionMag * (dt / 1000) * 0.012;
-  targetGlobalOrbitAngle = motion.x * 0.00055;
-  globalOrbitAngle += (targetGlobalOrbitAngle - globalOrbitAngle) * 0.08;
+  if (movingNow) {
+    targetGlobalOrbitAngle = motion.x * 0.00055;
+    globalOrbitAngle += (targetGlobalOrbitAngle - globalOrbitAngle) * 0.055;
+  }
+  window.mvSchlierenMotion = {
+    frameIndex,
+    moving: movingNow,
+    frameX: frameMoveX,
+    frameY: frameMoveY,
+    totalX: motionTotal.x,
+    totalY: motionTotal.y,
+    motionX: motion.x,
+    motionY: motion.y
+  };
 
   SCHLIEREN.forEach((item) => {
     item.px += frameMoveX * item.motionMul;
@@ -569,8 +714,13 @@ function updateMotion() {
 }
 
 function tick() {
+  frameIndex++;
   updateMotion();
   draw();
+}
+
+function angleDelta(from, to) {
+  return Math.atan2(Math.sin(to - from), Math.cos(to - from));
 }
 
 function updateFreeDrift(item, mx, my) {

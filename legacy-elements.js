@@ -56,8 +56,8 @@ const FLOATER_EASE       = 0.08;
 
 /* Fleck als Mini-Superfleck (lokal am Floater) – RESET auf Referenz */
 const FLECK_SUPER_SIZE      = 44;
-const FLECK_SUPER_TINT      = [22,22,28];           // grauer, weniger schwarz
-const FLECK_SUPER_ALPHA     = 0.39;
+const FLECK_SUPER_TINT      = [36,37,44];           // grauer, weniger schwarz
+const FLECK_SUPER_ALPHA     = 0.35;
 const FLECK_SUPER_FEATHER   = 1.05;
 const FLECK_SUPER_DRAW_W    = 60 * SCALE * 0.9 * 0.9 * 0.9 * 0.9 * 0.9 * 0.82 * 1.06; // etwas größer
 const FLECK_SUPER_DRAW_H    = FLECK_SUPER_DRAW_W * 0.88;
@@ -2183,12 +2183,16 @@ let directionChangeBoost = 1;
 let mouseContainPos = null;
 let mouseContainDir = null;
 let mouseContainDirSmooth = null;
+let smoothedFollowAngle = 0;
+let hasSmoothedFollowAngle = false;
 // Geglätteter Mausgeschwindigkeits-Multiplikator (1 = neutral).
 // langsame Maus -> ~0.4, schnelle Maus -> ~1.7
 // Startet am Idle-Floor (nicht 1.0), sonst dauert es bei träger Smoothing
 // ewig, bis die Elemente bei ruhiger Maus tatsächlich langsam werden.
 let mouseSpeedScale = 0.03;
 let schliereOppositeMovementDelayed = null;
+let elementOppositeMovementDelayed = null;
+let fleckOppositeMovementDelayed = null;
 let floater;             // FloaterPath instance
 let biggerCloud;
 // greyCoreCloud entfernt – biggerCloud ist jetzt ein einzelner Fleck
@@ -2238,6 +2242,10 @@ function steerVelocityTowardMouse(vel, mouseDir, amount = 0.18) {
   const speed = vel.mag();
   const desired = p5.Vector.mult(mouseDir.copy().normalize(), speed);
   vel.lerp(desired, amount);
+}
+
+function shortestAngleDelta(from, to) {
+  return atan2(sin(to - from), cos(to - from));
 }
 
 // Inline-Glasfaser-Renderer (für Hauptfloater-Kopie). Identisch zur
@@ -3342,8 +3350,8 @@ function comparePlacedSlot(label, variant, index, fallback) {
 function compareMotionOffset() {
   if (!floater) return createVector(0, 0);
   return createVector(
-    (floater.pos.x - floater.base.x) * 1.18,
-    (floater.pos.y - floater.base.y) * 1.18
+    (floater.pos.x - floater.base.x) * 0.58,
+    (floater.pos.y - floater.base.y) * 0.58
   );
 }
 
@@ -3351,7 +3359,7 @@ function elementFlowOffset(key, amp = 11) {
   let seed = 0;
   const s = String(key);
   for (let i = 0; i < s.length; i++) seed = (seed * 31 + s.charCodeAt(i)) % 9973;
-  const t = frameCount * 0.014;
+  const t = frameCount * 0.005;
   return createVector(
     Math.sin(t * (0.72 + (seed % 7) * 0.045) + seed * 0.017) * amp,
     Math.cos(t * (0.58 + (seed % 11) * 0.035) + seed * 0.013) * amp * 0.72
@@ -4262,10 +4270,20 @@ function drawSchliere12StyleSemReplica(label, x, y, r, aspect = 1.0, angleDeg = 
   if (label) drawSceneLabel(label, x + r * 0.82, y - r * 0.78);
 }
 
-function drawStaticRoundTestReplica(label, x, y, r = 64) {
-  const ctx = drawingContext;
-  ctx.save();
-  ctx.translate(x, y);
+const roundTestSpriteCache = new Map();
+
+function getRoundTestSprite(r) {
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  const key = `${Math.round(r * 10)}-${dpr}`;
+  if (roundTestSpriteCache.has(key)) return roundTestSpriteCache.get(key);
+
+  const pad = Math.ceil(r * 0.55 + 18);
+  const cssSize = Math.ceil((r + pad) * 2);
+  const sprite = document.createElement('canvas');
+  sprite.width = Math.ceil(cssSize * dpr);
+  sprite.height = Math.ceil(cssSize * dpr);
+  const ctx = sprite.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, cssSize * 0.5 * dpr, cssSize * 0.5 * dpr);
 
   ctx.filter = 'blur(5px)';
   ctx.fillStyle = 'rgba(245,252,255,0.09)';
@@ -4293,6 +4311,17 @@ function drawStaticRoundTestReplica(label, x, y, r = 64) {
   ctx.fill();
 
   ctx.filter = 'none';
+  const cached = { canvas: sprite, size: cssSize, offset: cssSize * 0.5 };
+  roundTestSpriteCache.set(key, cached);
+  return cached;
+}
+
+function drawStaticRoundTestReplica(label, x, y, r = 64) {
+  const ctx = drawingContext;
+  const sprite = getRoundTestSprite(r);
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(sprite.canvas, x - sprite.offset, y - sprite.offset, sprite.size, sprite.size);
   ctx.restore();
   if (label) drawSceneLabel(label, x + r * 0.78, y - r * 0.72);
 }
@@ -4468,7 +4497,7 @@ class NoiseCloud {
       let d = toStart.mag();
       if (d < DRIFT_RETURN_NEAR*2) {
         toStart.normalize().mult(DRIFT_RETURN_GAIN_N*0.6*d);
-        this.vel.mult(0.92);
+        this.vel.mult(0.62);
       } else {
         toStart.normalize().mult(DRIFT_RETURN_GAIN_F*0.8*d);
       }
@@ -4483,7 +4512,7 @@ class NoiseCloud {
     this.pos.add(this.vel);
     containElementPosition(this.pos, this.vel, this.size * 0.5 || 80);
     this.acc.mult(0);
-    this.vel.mult(DRIFT_DAMP);
+    this.vel.mult(isMoving ? DRIFT_DAMP : 0.72);
   }
 
   displayAt(x, y, w, h, blurPx=12) {
@@ -5469,6 +5498,36 @@ class FloaterPath {
     this.lengthStretch = 1;
   }
 
+  updateFromSchlierenMotion(sharedMotion) {
+    if (!sharedMotion || typeof sharedMotion.totalX !== 'number' || typeof sharedMotion.totalY !== 'number') {
+      return false;
+    }
+
+    if (this._lastSchlierenTotalX == null || this._lastSchlierenTotalY == null) {
+      this._lastSchlierenTotalX = sharedMotion.totalX;
+      this._lastSchlierenTotalY = sharedMotion.totalY;
+      return true;
+    }
+
+    const dx = sharedMotion.totalX - this._lastSchlierenTotalX;
+    const dy = sharedMotion.totalY - this._lastSchlierenTotalY;
+    this._lastSchlierenTotalX = sharedMotion.totalX;
+    this._lastSchlierenTotalY = sharedMotion.totalY;
+
+    const visualMotionFactor = 0.48;
+    this.vel.set(dx * visualMotionFactor, dy * visualMotionFactor);
+    this.pos.add(this.vel);
+    containElementPosition(this.pos, this.vel, this.pathThickness || 60);
+    this.acc.mult(0);
+    this.rotation = 0;
+    this.baseRotation = 0;
+    this.rotationFromSquish = 0;
+    this.squish = 1;
+    this.roll = 0;
+    this.lengthStretch = 1;
+    return true;
+  }
+
   display() {
     push();
     translate(this.pos.x, this.pos.y);
@@ -5666,7 +5725,7 @@ class FloaterPath {
     image(floaterFleckCloud.pg, 0, 0, FLECK_SUPER_DRAW_W, FLECK_SUPER_DRAW_H);
     drawingContext.save();
     drawingContext.filter = `blur(${FLECK_SUPER_BLUR_PX * 2.4}px)`;
-    drawingContext.fillStyle = 'rgba(20, 22, 28, 0.20)';
+    drawingContext.fillStyle = 'rgba(42, 44, 52, 0.18)';
     drawingContext.beginPath();
     drawingContext.ellipse(
       FLECK_SUPER_DRAW_W * 0.22,
@@ -6141,7 +6200,7 @@ function queueSceneBuild() {
       const s = miniBase * scl;
       const a = new NucleusDrop(clusterCx + offX, clusterCy + offY, s, 'normal');
       a.aspect = 1.0;
-      a._alphaMul = 0.50;
+      a._alphaMul = 0.45;
       a._skipSimpleGlassRefraction = false;
       if (!_clusterAnchor) {
         a.staticAnchor = true;
@@ -6154,14 +6213,14 @@ function queueSceneBuild() {
       nucleusDrops.push(a);
       const b = new NucleusDrop(clusterCx + offX + s * 0.34, clusterCy + offY - s * 0.34, s, 'normal');
       b.aspect = 1.0;
-      b._alphaMul = 0.44;
+      b._alphaMul = 0.40;
       b._skipSimpleGlassRefraction = false;
       b.semiTiedTo = _clusterAnchor;
       b.semiOffset = createVector(offX + s * 0.34, offY - s * 0.34);
       nucleusDrops.push(b);
       const c = new NucleusDrop(clusterCx + offX - s * 0.30, clusterCy + offY + s * 0.30, s * 0.96, 'normal');
       c.aspect = 1.0;
-      c._alphaMul = 0.40;
+      c._alphaMul = 0.36;
       c._skipSimpleGlassRefraction = false;
       c.semiTiedTo = _clusterAnchor;
       c.semiOffset = createVector(offX - s * 0.30, offY + s * 0.30);
@@ -6171,7 +6230,7 @@ function queueSceneBuild() {
       const s = miniBase * scl;
       const a = new NucleusDrop(clusterCx + offX, clusterCy + offY, s, 'normal');
       a.aspect = 1.0;
-      a._alphaMul = 0.50;
+      a._alphaMul = 0.45;
       a._skipSimpleGlassRefraction = false;
       if (!_clusterAnchor) {
         a.staticAnchor = true;
@@ -6184,7 +6243,7 @@ function queueSceneBuild() {
       nucleusDrops.push(a);
       const top = new NucleusDrop(clusterCx + offX, clusterCy + offY, s * 0.78, 'normal');
       top.aspect = 1.0;
-      top._alphaMul = 0.46;
+      top._alphaMul = 0.41;
       top._skipSimpleGlassRefraction = false;
       top.semiTiedTo = _clusterAnchor;
       top.semiOffset = createVector(offX, offY);
@@ -6239,7 +6298,7 @@ function queueSceneBuild() {
       const s = triBase * scl;
       const d = new NucleusDrop(triCx + rxp, triCy + ryp, s, 'normal');
       d.aspect = 1.0;
-      d._alphaMul = 0.42;
+      d._alphaMul = 0.39 + (mode % 5) * 0.03;
       d._speedClass = 'testFast';
       d._skipSimpleGlassRefraction = true;
       if (!_triAnchor) {
@@ -6248,33 +6307,9 @@ function queueSceneBuild() {
         _triAnchor = d;
       } else {
         d.semiTiedTo = _triAnchor;
-      d.semiOffset = createVector(rxp, ryp);
+        d.semiOffset = createVector(rxp, ryp);
       }
       nucleusDrops.push(d);
-      const outward = createVector(rxp, ryp);
-      if (outward.mag() < 0.01) outward.set(0, -1);
-      outward.normalize();
-      const offsets = mode % 2 === 0
-        ? [
-            [0.18 + outward.x * 0.18, -0.18 + outward.y * 0.18, 1.0, 0.65],
-            [-0.16 + outward.x * 0.14, 0.16 + outward.y * 0.14, 0.96, 0.60],
-            [0.02 + outward.x * 0.10, 0.02 + outward.y * 0.10, 0.78, 0.78]
-          ]
-        : [
-            [0.08 + outward.x * 0.18, -0.08 + outward.y * 0.18, 1.0, 0.65],
-            [-0.08 + outward.x * 0.14, 0.08 + outward.y * 0.14, 0.96, 0.60],
-            [outward.x * 0.10, outward.y * 0.10, 0.78, 0.78]
-          ];
-      offsets.forEach(o => {
-        const child = new NucleusDrop(triCx + rxp + s * o[0], triCy + ryp + s * o[1], s * o[2], 'normal');
-        child.aspect = 1.0;
-        child._alphaMul = o[3] * 0.58;
-        child._speedClass = 'testFast';
-        child._skipSimpleGlassRefraction = true;
-        child.semiTiedTo = _triAnchor;
-        child.semiOffset = createVector(rxp + s * o[0], ryp + s * o[1]);
-        nucleusDrops.push(child);
-      });
     }
     const vA = createVector(-1.45 * triStep, 0.95 * triStep);
     const vB = createVector(1.35 * triStep, 1.02 * triStep);
@@ -6638,11 +6673,24 @@ function draw() {
     if (mouseContainDirSmooth.mag() < 0.12) mouseContainDirSmooth = null;
   }
 
+  let followMovement = movement.copy();
+  const followMag = followMovement.mag();
+  if (mouseMoving && followMag > 0.001) {
+    const targetFollowAngle = atan2(followMovement.y, followMovement.x);
+    if (!hasSmoothedFollowAngle) {
+      smoothedFollowAngle = targetFollowAngle;
+      hasSmoothedFollowAngle = true;
+    } else {
+      smoothedFollowAngle += shortestAngleDelta(smoothedFollowAngle, targetFollowAngle) * 0.22;
+    }
+    followMovement = createVector(cos(smoothedFollowAngle), sin(smoothedFollowAngle)).mult(followMag);
+  }
+
   // Entgegengesetzte Mausbewegung + spiralförmige Drehung
   let oppositeMovement = createVector(0, 0);
   if (mouseMoving) {
     // Entgegengesetzte Richtung der Mausbewegung
-    oppositeMovement = p5.Vector.mult(movement, -1);
+    oppositeMovement = p5.Vector.mult(followMovement, -1);
     
     // Spiralförmige Drehung im Uhrzeigersinn hinzufügen
   }
@@ -6662,12 +6710,12 @@ function draw() {
   //   mMag >=42 px/Frame (rasend)       -> ~1.90 (gedeckelt)
   const speedNorm = constrain(mMag / 35, 0, 1.2);
   // Zurück zu Exponent 2.6 (linearere Reaktion als 3.0).
-  const speedCurve = Math.pow(speedNorm, 2.6);
+  const speedCurve = Math.pow(speedNorm, 2.25);
   // Floor weiter abgesenkt 0.07 -> 0.03 für noch ruhigeres Verhalten bei langsamer Maus.
-  const targetSpeedScale = mouseMoving ? constrain(0.006 + speedCurve * 0.82, 0.006, 0.86) : 0;
+  const targetSpeedScale = mouseMoving ? constrain(0.010 + speedCurve * 0.82, 0.010, 0.86) : 0;
   // Bootsphysik: leichte, gleichmäßige Trägheit – linear, unabhängig vom Delta.
   // Hochgehen 0.07 -> ~6-10 Frames Verzögerung. Runtergehen 0.10 -> sanftes Ausgleiten.
-  const speedSmoothing = targetSpeedScale > mouseSpeedScale ? 0.105 : 0.055;
+  const speedSmoothing = targetSpeedScale > mouseSpeedScale ? 0.155 : 0.075;
   mouseSpeedScale = lerp(mouseSpeedScale, targetSpeedScale, speedSmoothing);
 
   // Elemente/Flecken/HF reagieren direkt; nur Schlieren bekommen unten eine eigene Verzögerung.
@@ -6711,10 +6759,20 @@ function draw() {
     }
   }
   // Skaliertes oppositeMovement nur für Nicht-Schlieren-Elemente
-  const oppositeMovementNS = p5.Vector.mult(oppositeMovement, 0.82);
+  if (!elementOppositeMovementDelayed) elementOppositeMovementDelayed = createVector(0, 0);
+  const elementTargetMovement = p5.Vector.mult(oppositeMovement, 0.40);
+  elementOppositeMovementDelayed.lerp(elementTargetMovement, mouseMoving ? 0.038 : 0.055);
+  const oppositeMovementNS = elementOppositeMovementDelayed.copy();
 
-  // Floater updaten (verwendet die geskalierte Variante)
-  floater.update(mouseMoving, mMag, mouseDXNorm, oppositeMovementNS);
+  if (!fleckOppositeMovementDelayed) fleckOppositeMovementDelayed = createVector(0, 0);
+  const fleckTargetMovement = p5.Vector.mult(oppositeMovement, 1.08);
+  fleckOppositeMovementDelayed.lerp(fleckTargetMovement, mouseMoving ? 0.12 : 0.44);
+  const oppositeMovementFlecks = fleckOppositeMovementDelayed.copy();
+
+  const sharedSchlierenMotion = window.mvSchlierenMotion;
+  if (!floater.updateFromSchlierenMotion(sharedSchlierenMotion)) {
+    floater.update(mouseMoving, mMag, mouseDXNorm, oppositeMovementNS);
+  }
 
   // Transparenter Hintergrund - blauer Himmel scheint durch
   clear();
@@ -6750,7 +6808,7 @@ function draw() {
   // damit biggerCloud NICHT identisch zu smallerCloud läuft.
   // WICHTIG: oppositeMovementNS zeigt VON der Maus weg → invertieren, damit Cloud
   // der Blickrichtung (Maus) folgt, genau wie der Hauptfloater.
-  const mouseDirNS = p5.Vector.mult(oppositeMovementNS, -1);
+  const mouseDirNS = p5.Vector.mult(oppositeMovementFlecks, -1);
   const biggerAngle = 0.6;  // ~34° Rotation gegenüber smallerCloud
   const biggerDriftX = sin(frameCount * 0.011 + 1.7) * 0.12;
   const biggerDriftY = cos(frameCount * 0.009 + 0.4) * 0.12;
@@ -6762,15 +6820,15 @@ function draw() {
     mouseMoving,
     [SMALLER_POS_XF-0.04, SMALLER_POS_XF+0.04],
     [SMALLER_POS_YF-0.22, SMALLER_POS_YF+0.04],
-    BIGGER_SPEED_SCALE,
+    BIGGER_SPEED_SCALE * 1.45,
     biggerFollow,
-    1.4
+    1.85
   );
   // Superflecken temporÃ¤r ausgeblendet.
   // Kern weich angeglichen an Corona: größer, diffuser, geringerer Alpha
   // → keine harte Trennung mehr zwischen heller Corona und dunklem Kern
   {
-    drawHFStyleCloudFleck(biggerCloud, 1.1, 1, 1.16);
+    drawHFStyleCloudFleck(biggerCloud, 1.1, 1, 1.30);
     drawCloudLabel('F1', biggerCloud);
     if (upperLeftGreyCloud) {
       const f2Follow = createVector(
@@ -6781,9 +6839,9 @@ function draw() {
         mouseMoving,
         [0.12, 0.26],
         [0.72, 0.90],
-        SMALLER_SPEED_SCALE * 0.82,
+        SMALLER_SPEED_SCALE * 1.20,
         f2Follow,
-        1.15
+        1.55
       );
     }
     drawHFStyleCloudFleck(upperLeftGreyCloud, 1.0, 2.10, 1.42);
@@ -6794,7 +6852,7 @@ function draw() {
           mouseDirNS.x * 0.72 + sin(frameCount * 0.010 + i) * 0.06,
           mouseDirNS.y * 0.72 + cos(frameCount * 0.012 + i) * 0.06
         );
-        c.update(mouseMoving, [0.39, 0.61], [0.42, 0.62], SMALLER_SPEED_SCALE * 0.75, follow, 0.95);
+        c.update(mouseMoving, [0.39, 0.61], [0.42, 0.62], SMALLER_SPEED_SCALE * 1.08, follow, 1.28);
         drawHFStyleCloudFleck(c, 1.0, 2.10, 1.42);
       });
     }
@@ -6903,9 +6961,9 @@ function draw() {
     mouseMoving,
     [BIGGER_POS_XF-0.05, BIGGER_POS_XF+0.05],
     [BIGGER_POS_YF-0.05, BIGGER_POS_YF+0.05],
-    SMALLER_SPEED_SCALE,
+    SMALLER_SPEED_SCALE * 1.45,
     smallerFollow,
-    1.6
+    2.05
   );
   drawHFStyleCloudFleck(smallerCloud, 1.0, 2.10, 1.42);
   drawCloudLabel('F3', smallerCloud);
@@ -6934,6 +6992,18 @@ function draw() {
   drawingContext.globalAlpha = 0.92 * ELEMENT_ALPHA;
   drawStaticRoundTestReplica('', centerRound.x, centerRound.y, NUCLEUS_DROP_BASE_SIZE * 0.54);
   drawingContext.restore();
+
+  [
+    { key: 'rundtest-extra-1', x: 0.27, y: 0.43, r: 0.40, amp: 12 },
+    { key: 'rundtest-extra-2', x: 0.73, y: 0.40, r: 0.64, amp: 14 },
+    { key: 'rundtest-extra-3', x: 0.61, y: 0.78, r: 0.78, amp: 11 }
+  ].forEach(rt => {
+    const p = flowedPoint(p5.Vector.add(createVector(width * rt.x, height * rt.y), cmpMotion), rt.key, rt.amp);
+    drawingContext.save();
+    drawingContext.globalAlpha = 0.90 * ELEMENT_ALPHA;
+    drawStaticRoundTestReplica('', p.x, p.y, NUCLEUS_DROP_BASE_SIZE * rt.r);
+    drawingContext.restore();
+  });
 
   /* --- Helle Floater: entfernt --- */
   /* --- elongCircleCluster: entfernt --- */
@@ -7015,9 +7085,8 @@ function draw() {
     if (compareVariantVisible(compareLabel, 'slime')) {
       if (compareLabel === 'Dreieck') {
         drawingContext.save();
-        drawingContext.globalAlpha *= 0.055 * ELEMENT_ALPHA;
-        drawingContext.filter = 'brightness(1.86) contrast(0.58) blur(2.2px)';
-        drawSlimeStyleBlobReplica('', sp.x + ox, sp.y + oy, r * 1.04, d.aspect || 1, 18 + d._compareCopy);
+        drawingContext.globalAlpha *= 0.92 * ELEMENT_ALPHA;
+        drawStaticRoundTestReplica('', sp.x + ox, sp.y + oy, r * 0.88);
         drawingContext.filter = 'none';
         drawingContext.restore();
       } else if (compareLabel === 'Nuclei-Gruppe') {
@@ -7046,7 +7115,6 @@ function draw() {
       if (compareVariantVisible(compareLabel, 'hf')) drawVariantLetter(uniqueElementLetter(compareLabel, 'hf'), hp.x + ox, hp.y + oy);
       if (compareVariantVisible(compareLabel, 'slime')) {
         if (compareLabel === 'Dreieck') {
-          drawSceneLabel(uniqueElementLetter(compareLabel, 'slime'), sp.x + ox + r * 2.2, sp.y + oy - r * 1.4);
         } else {
           drawVariantLetter(uniqueElementLetter(compareLabel, 'slime'), sp.x + ox, sp.y + oy);
           if (compareLabel !== 'Nuclei-Gruppe') drawSceneLabel(uniqueElementLetter(compareLabel, 'slime'), sp.x + ox + r * 0.9, sp.y + oy - r * 0.65);
@@ -7069,7 +7137,7 @@ function draw() {
       const dy = (d.pos.y - sourceCenter.y) * copyScale;
       d.pos.set(cx + dx * ca - dy * sa, cy + dx * sa + dy * ca);
       drawingContext.save();
-      drawingContext.globalAlpha *= ((typeof d._alphaMul === 'number') ? d._alphaMul : 1) * 0.72 * ELEMENT_ALPHA;
+      drawingContext.globalAlpha *= ((typeof d._alphaMul === 'number') ? d._alphaMul : 1) * 0.60 * ELEMENT_ALPHA;
       d.display();
       drawingContext.restore();
       d.pos.set(oldPos.x, oldPos.y);
@@ -7125,19 +7193,19 @@ function draw() {
     floater.pos.set(hfBaseX + hfMotionX, hf1BaseY + hfMotionY);
     push();
     drawingContext.save();
-    drawingContext.globalAlpha *= ELEMENT_ALPHA * 1.08;
+    drawingContext.globalAlpha *= ELEMENT_ALPHA * 0.88;
     drawingContext.filter = 'contrast(1.42) brightness(1.14)';
     translate(floater.pos.x, floater.pos.y);
     scale(0.80, 0.93);
     translate(-floater.pos.x, -floater.pos.y);
     floater.display();
+    drawingContext.restore();
     drawingContext.save();
     drawingContext.globalAlpha = 1;
     translate(floater.pos.x, floater.pos.y);
     floater.drawFleckLocal(floater.fleckLocal.x, floater.fleckLocal.y);
     drawingContext.restore();
     drawingContext.filter = 'none';
-    drawingContext.restore();
     pop();
     drawSceneLabel(uniqueElementLetter('HF1'), floater.pos.x + 34, floater.pos.y - 34);
     floater.pos.set(oldPos.x, oldPos.y);
