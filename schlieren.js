@@ -18,6 +18,8 @@ let motionTotal = { x: 0, y: 0 };
 const SCHLIERE_SPRITE_REFRESH_FRAMES = 4;
 const SCHLIEREN_ALPHA_MUL = 0.84;
 const SCHLIEREN_THICKNESS_MUL = 0.86;
+const GREY_SCHLIEREN_ALPHA_MUL = 0.55;
+const LIGHT_SCHLIEREN_ALPHA_MUL = 0.64;
 
 const SCHLIEREN = [
   { x: 0.31, y: 0.34, len: 360, thick: 0.56, curve: 58, angle: -48, alpha: 0.86, seed: 1.7, shape: 'comma', fleckAlpha: 0.72 },
@@ -279,7 +281,7 @@ function drawSchliere(item, index) {
   const x = item.x * window.innerWidth;
   const y = item.y * window.innerHeight;
   const hasAttachedFleck = !item.light && index % 3 !== 2;
-  const alpha = item.alpha * item.visibility * SCHLIEREN_ALPHA_MUL;
+  const alpha = item.alpha * item.visibility * SCHLIEREN_ALPHA_MUL * (item.light ? LIGHT_SCHLIEREN_ALPHA_MUL : GREY_SCHLIEREN_ALPHA_MUL);
   const offsets = item.edge
     ? [[0, 0], [-window.innerWidth, 0], [window.innerWidth, 0], [0, -window.innerHeight], [0, window.innerHeight]]
     : [[0, 0]];
@@ -666,7 +668,7 @@ function updateMotion() {
   const dt = Math.min(50, now - lastFrameAt);
   lastFrameAt = now;
   const movingNow = now - lastMoveAt < 180;
-  const ease = 1 - Math.exp(-dt / (movingNow ? 125 : 82));
+  const ease = 1 - Math.exp(-dt / (movingNow ? 125 : 170));
   const directionEase = 1 - Math.exp(-dt / 105);
   if (movingNow) {
     const targetAngle = Math.atan2(moveVector.y, moveVector.x);
