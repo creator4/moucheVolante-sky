@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
 const canvas = document.getElementById('scene');
 const mainCtx = canvas.getContext('2d');
 let ctx = mainCtx;
@@ -18,8 +18,8 @@ let motionTotal = { x: 0, y: 0 };
 const SCHLIERE_SPRITE_REFRESH_FRAMES = 4;
 const SCHLIEREN_ALPHA_MUL = 0.84;
 const SCHLIEREN_THICKNESS_MUL = 0.86;
-const GREY_SCHLIEREN_ALPHA_MUL = 0.55;
-const LIGHT_SCHLIEREN_ALPHA_MUL = 0.64;
+const GREY_SCHLIEREN_ALPHA_MUL = 0.47;
+const LIGHT_SCHLIEREN_ALPHA_MUL = 0.56;
 
 const SCHLIEREN = [
   { x: 0.31, y: 0.34, len: 360, thick: 0.56, curve: 58, angle: -48, alpha: 0.86, seed: 1.7, shape: 'comma', fleckAlpha: 0.72 },
